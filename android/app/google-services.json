@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "1087433906772",
+    "project_id": "text-your-closed-ones",
+    "storage_bucket": "text-your-closed-ones.appspot.com"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:1087433906772:android:d7680429e39f08e3846bc1",
+        "android_client_info": {
+          "package_name": "com.example.messaing"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyB3618GE6TWl4CqeALeFswyMeiXRa9CONI"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

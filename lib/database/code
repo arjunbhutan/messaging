@@ -1,0 +1,764 @@
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/material.dart';
+import 'package:messaing/components/my_drawer.dart';
+import 'package:messaing/components/my_list_tile.dart';
+import 'package:messaing/components/my_post_button.dart';
+import 'package:messaing/components/my_textfield.dart';
+import 'package:messaing/database/firestore.dart';
+class HomePage extends StatefulWidget {
+  const HomePage({super.key});
+
+  @override
+  _HomePageState createState() => _HomePageState();
+}
+
+class _HomePageState extends State<HomePage> {
+  final FirestoreDatabase database = FirestoreDatabase();
+  final TextEditingController newPostController = TextEditingController();
+
+  void postMessage() {
+    if (newPostController.text.isNotEmpty) {
+      String message = newPostController.text;
+      database.addPost(message);
+    }
+    newPostController.clear();
+  }
+
+  void deletePost(String postId) {
+    database.deletePost(postId);
+    setState(() {});
+  }
+
+  void showDeleteDialog(BuildContext context, String postId) {
+    showDialog(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: Text("Delete Post"),
+          content: Text("Are you sure you want to delete this post?"),
+          actions: <Widget>[
+            TextButton(
+              child: Text("Cancel"),
+              onPressed: () {
+                Navigator.of(context).pop();
+              },
+            ),
+            TextButton(
+              child: Text("Delete"),
+              onPressed: () {
+                deletePost(postId);
+                Navigator.of(context).pop();
+              },
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text("Speak, Listen, and Act."),
+        backgroundColor: Colors.transparent,
+        foregroundColor: Theme.of(context).colorScheme.inversePrimary,
+        elevation: 0,
+      ),
+      drawer: const MyDrawer(),
+      body: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.all(25.0),
+            child: Row(
+              children: [
+                Expanded(
+                  child: MyTextfield(
+                    hintText: "Text your team mates!",
+                    controller: newPostController,
+                    obscureText: false,
+                  ),
+                ),
+                PostButton(
+                  onTap: postMessage,
+                ),
+              ],
+            ),
+          ),
+          Expanded(
+            child: StreamBuilder(
+              stream: database.getPostsStream(),
+              builder: (context, AsyncSnapshot<QuerySnapshot> snapshot) {
+                if (snapshot.connectionState == ConnectionState.waiting) {
+                  return const Center(
+                    child: CircularProgressIndicator(),
+                  );
+                }
+
+                if (snapshot.hasError) {
+                  return Center(
+                    child: Text("Error: ${snapshot.error}"),
+                  );
+                }
+
+                if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
+                  return const Center(
+                    child: Padding(
+                      padding: EdgeInsets.all(25),
+                      child: Text("No Posts.. Post something"),
+                    ),
+                  );
+                }
+
+                final posts = snapshot.data!.docs;
+
+                return ListView.builder(
+                  itemCount: posts.length,
+                  itemBuilder: (context, index) {
+                    final post = posts[index];
+
+                    if (post.data() is Map<String, dynamic>) {
+                      Map<String, dynamic> postData = post.data() as Map<String, dynamic>;
+                      if (postData.containsKey('PostMessage')) {
+                        String message = postData['PostMessage'];
+                        String userEmail = postData['UserEmail'];
+                        Timestamp timestamp = postData['TimeStamp'];
+                        String postId = post.id;
+
+                        bool isAuthor = FirebaseAuth.instance.currentUser?.email == userEmail;
+
+                        return GestureDetector(
+                          onLongPress: isAuthor ? () => showDeleteDialog(context, postId) : null,
+                          child: MyListTile(title: message, subTitle: userEmail),
+                        );
+                      } else {
+                        return Text('');
+                      }
+                    } else {
+                      return Text('Error: Post data is not a Map');
+                    }
+                  },
+                );
+              },
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+/*import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+class FirestoreDatabase {
+  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+  Stream<QuerySnapshot> getPostsStream() {
+    return _firestore
+        .collection('posts')
+        .orderBy('TimeStamp', descending: true)
+        .snapshots();
+  }
+
+  Future<void> addPost(String message) async {
+    String userEmail = FirebaseAuth.instance.currentUser?.email ?? 'Anonymous';
+    await _firestore.collection('posts').add({
+      'PostMessage': message,
+      'UserEmail': userEmail,
+      'TimeStamp': FieldValue.serverTimestamp(),
+    });
+  }
+  Future<void> deletePost(String postId) async {
+    await _firestore.collection('posts').doc(postId).delete();
+  }
+
+  Future<void> hidePost(String postId) async {
+    String currentUserEmail = FirebaseAuth.instance.currentUser?.email ?? '';
+    await _firestore.collection('posts').doc(postId).update({
+      'HiddenBy': FieldValue.arrayUnion([currentUserEmail])
+    });
+  }
+}
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_storage/firebase_storage.dart';
+import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
+import 'package:messaing/components/my_back_button.dart';
+import 'dart:io';
+class ProfilePage extends StatefulWidget {
+  ProfilePage({super.key});
+  @override
+  _ProfilePageState createState() => _ProfilePageState();
+}
+
+class _ProfilePageState extends State<ProfilePage> {
+  // Get the current user
+  final User? currentUser = FirebaseAuth.instance.currentUser;
+  final ImagePicker _picker = ImagePicker();
+  File? _image;
+  bool _isUploading = false;
+
+  // Function to pick an image from the gallery
+  Future<void> pickImage() async {
+    // Check if user is authenticated
+    if (FirebaseAuth.instance.currentUser == null) {
+      print('User is not authenticated');
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Please log in to upload a profile picture')),
+      );
+      return;
+    }
+
+    final pickedFile = await _picker.pickImage(source: ImageSource.gallery);
+
+    if (pickedFile != null) {
+      setState(() {
+        _image = File(pickedFile.path);
+        _isUploading = true;
+      });
+      await uploadImage();
+    }
+  }
+
+  // Function to upload the image to Firebase Storage
+  Future<void> uploadImage() async {
+    if (_image == null || currentUser == null) {
+      print('Image or user is null');
+      return;
+    }
+
+    try {
+      print('Starting upload process...');
+      // Create a reference to the location you want to upload to in Firebase Storage
+      final ref = FirebaseStorage.instance
+          .ref()
+          .child('profile_pictures')
+          .child(currentUser!.uid)
+          .child('profile.jpg');
+
+      print('Uploading file...');
+      // Upload the file
+      await ref.putFile(_image!);
+      print('File uploaded successfully');
+
+      print('Getting download URL...');
+      // Get the download URL
+      final url = await ref.getDownloadURL();
+      print('Download URL obtained: $url');
+
+      print('Updating Firestore...');
+      // Update the user's profile in Firestore
+      await FirebaseFirestore.instance
+          .collection('Users')
+          .doc(currentUser!.uid)
+          .update({'profile_picture': url});
+      print('Firestore updated successfully');
+
+      setState(() {
+        _isUploading = false;
+      });
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Profile picture updated successfully')),
+      );
+    } catch (e) {
+      print('Error uploading image: $e');
+      setState(() {
+        _isUploading = false;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Failed to update profile picture: $e')),
+      );
+    }
+  }
+
+  // Function to get user details from Firestore
+  Future<DocumentSnapshot<Map<String, dynamic>>> getUserDetails() async {
+    if (currentUser == null) {
+      throw Exception("User not logged in");
+    }
+
+    DocumentSnapshot<Map<String, dynamic>> doc = await FirebaseFirestore.instance
+        .collection("Users")
+        .doc(currentUser!.uid)
+        .get();
+
+    if (!doc.exists) {
+      // If the document doesn't exist, create it with some default data
+      await FirebaseFirestore.instance
+          .collection("Users")
+          .doc(currentUser!.uid)
+          .set({
+        'email': currentUser!.email,
+        'username': currentUser!.displayName ?? 'User',
+        'profile_picture': null,
+      });
+
+      // Fetch the document again
+      doc = await FirebaseFirestore.instance
+          .collection("Users")
+          .doc(currentUser!.uid)
+          .get();
+    }
+
+    return doc;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Theme.of(context).colorScheme.background,
+      body: currentUser == null
+          ? Center(child: Text("User not logged in"))
+          : FutureBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+        future: getUserDetails(),
+        builder: (context, snapshot) {
+          if (snapshot.connectionState == ConnectionState.waiting) {
+            return const Center(
+              child: CircularProgressIndicator(),
+            );
+          } else if (snapshot.hasError) {
+            return Center(child: Text("Error: ${snapshot.error}"));
+          } else if (snapshot.hasData) {
+            Map<String, dynamic> user = snapshot.data!.data()!;
+            return Center(
+              child: Column(
+                children: [
+                  const Padding(
+                    padding: EdgeInsets.only(top: 50.0, left: 25),
+                    child: Row(
+                      children: [
+                        MyBackButton(),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 25),
+                  GestureDetector(
+                    onTap: _isUploading ? null : pickImage,
+                    child: Stack(
+                      alignment: Alignment.center,
+                      children: [
+                        CircleAvatar(
+                          radius: 55,
+                          backgroundImage: user['profile_picture'] != null
+                              ? NetworkImage(user['profile_picture'])
+                              : null,
+                          child: user['profile_picture'] == null
+                              ? Icon(
+                            Icons.person,
+                            size: 64,
+                            color: Theme.of(context).colorScheme.primary,
+                          )
+                              : null,
+                        ),
+                        if (_isUploading)
+                          CircularProgressIndicator(),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(Icons.arrow_upward_sharp, size: 16),
+                      SizedBox(width: 4),
+                      Text(
+                        'Tap on the circle to upload your profile ',
+                        style: TextStyle(
+                          fontSize: 14,
+                          //color: Theme.of(context).colorScheme.secondary,
+                          color: Colors.white60,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+                  Text(
+                    user['email'] ?? '',
+                    style: TextStyle(
+                      color: Colors.black87,
+                    ),
+                  ),
+                  Text(
+                    user['username'] ?? '',
+                    style: const TextStyle(
+                      fontSize: 24,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.green,
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                ],
+              ),
+            );
+          } else {
+            return Center(child: Text("No Data"));
+          }
+        },
+      ),
+    );
+  }
+}
+
+//profile:
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_storage/firebase_storage.dart';
+import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
+import 'package:messaing/components/my_back_button.dart';
+import 'dart:io';
+
+class ProfilePage extends StatefulWidget {
+  ProfilePage({super.key});
+
+  @override
+  _ProfilePageState createState() => _ProfilePageState();
+}
+
+class _ProfilePageState extends State<ProfilePage> {
+  final _formKey = GlobalKey<FormState>();
+  int? _age;
+  String? _gender;
+  String? _officialEmail;
+  String? _teamDesignation;
+
+  final User? currentUser = FirebaseAuth.instance.currentUser;
+  final ImagePicker _picker = ImagePicker();
+  File? _image;
+  bool _isUploading = false;
+  bool _isEditing = false;
+
+  Future<void> pickImage() async {
+    if (FirebaseAuth.instance.currentUser == null) {
+      print('User is not authenticated');
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Please log in to upload a profile picture')),
+      );
+      return;
+    }
+
+    final pickedFile = await _picker.pickImage(source: ImageSource.gallery);
+
+    if (pickedFile != null) {
+      setState(() {
+        _image = File(pickedFile.path);
+        _isUploading = true;
+      });
+      await uploadImage();
+    }
+  }
+
+  Future<void> uploadImage() async {
+    if (_image == null || currentUser == null) {
+      print('Image or user is null');
+      return;
+    }
+
+    try {
+      print('Starting upload process...');
+      final ref = FirebaseStorage.instance
+          .ref()
+          .child('profile_pictures')
+          .child(currentUser!.uid)
+          .child('profile.jpg');
+
+      print('Uploading file...');
+      await ref.putFile(_image!);
+      print('File uploaded successfully');
+
+      print('Getting download URL...');
+      final url = await ref.getDownloadURL();
+      print('Download URL obtained: $url');
+
+      print('Updating Firestore...');
+      await FirebaseFirestore.instance
+          .collection('Users')
+          .doc(currentUser!.uid)
+          .update({'profile_picture': url});
+      print('Firestore updated successfully');
+
+      setState(() {
+        _isUploading = false;
+      });
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Profile picture updated successfully')),
+      );
+    } catch (e) {
+      print('Error uploading image: $e');
+      setState(() {
+        _isUploading = false;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Failed to update profile picture: $e')),
+      );
+    }
+  }
+
+  Future<DocumentSnapshot<Map<String, dynamic>>> getUserDetails() async {
+    if (currentUser == null) {
+      throw Exception("User not logged in");
+    }
+
+    DocumentSnapshot<Map<String, dynamic>> doc = await FirebaseFirestore.instance
+        .collection("Users")
+        .doc(currentUser!.uid)
+        .get();
+
+    if (!doc.exists) {
+      await FirebaseFirestore.instance
+          .collection("Users")
+          .doc(currentUser!.uid)
+          .set({
+        'email': currentUser!.email,
+        'username': currentUser!.displayName ?? 'User',
+        'profile_picture': null,
+        'age': null,
+        'gender': null,
+        'official_email': null,
+        'team_designation': null,
+      });
+
+      doc = await FirebaseFirestore.instance
+          .collection("Users")
+          .doc(currentUser!.uid)
+          .get();
+    }
+
+    return doc;
+  }
+
+  Widget _buildProfileInfo(Map<String, dynamic> user) {
+    return Column(
+      children: [
+        Text(
+          'Age: ${user['age'] ?? 'Not set'}',
+          style: TextStyle(fontSize: 16),
+        ),
+        SizedBox(height: 8),
+        Text(
+          'Gender: ${user['gender'] ?? 'Not set'}',
+          style: TextStyle(fontSize: 16),
+        ),
+        SizedBox(height: 8),
+        Text(
+          'Official Email: ${user['official_email'] ?? 'Not set'}',
+          style: TextStyle(fontSize: 16),
+        ),
+        SizedBox(height: 8),
+        Text(
+          'Team Designation: ${user['team_designation'] ?? 'Not set'}',
+          style: TextStyle(fontSize: 16),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildEditForm() {
+    return Form(
+      key: _formKey,
+      child: Column(
+        children: [
+          TextFormField(
+            decoration: const InputDecoration(labelText: 'Age'),
+            keyboardType: TextInputType.number,
+            validator: (value) {
+              if (value == null || value.isEmpty) {
+                return 'Please enter your age';
+              }
+              return null;
+            },
+            onSaved: (value) => _age = int.tryParse(value ?? ''),
+          ),
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              Text('Gender: '),
+              Radio(
+                value: 'Male',
+                groupValue: _gender,
+                onChanged: (value) {
+                  setState(() {
+                    _gender = value as String?;
+                  });
+                },
+              ),
+              Text('Male'),
+              Radio(
+                value: 'Female',
+                groupValue: _gender,
+                onChanged: (value) {
+                  setState(() {
+                    _gender = value as String?;
+                  });
+                },
+              ),
+              Text('Female'),
+              Radio(
+                value: 'Others',
+                groupValue: _gender,
+                onChanged: (value) {
+                  setState(() {
+                    _gender = value as String?;
+                  });
+                },
+              ),
+              Text('Others'),
+            ],
+          ),
+          const SizedBox(height: 10),
+          TextFormField(
+            decoration: const InputDecoration(labelText: 'Official Email'),
+            keyboardType: TextInputType.emailAddress,
+            validator: (value) {
+              if (value == null || value.isEmpty) {
+                return 'Please enter your official email';
+              }
+              return null;
+            },
+            onSaved: (value) => _officialEmail = value,
+          ),
+          const SizedBox(height: 10),
+          TextFormField(
+            decoration: const InputDecoration(labelText: 'Team Designation'),
+            validator: (value) {
+              if (value == null || value.isEmpty) {
+                return 'Please enter your team designation';
+              }
+              return null;
+            },
+            onSaved: (value) => _teamDesignation = value,
+          ),
+          const SizedBox(height: 20),
+          ElevatedButton(
+            onPressed: () async {
+              if (_formKey.currentState!.validate()) {
+                _formKey.currentState!.save();
+                await FirebaseFirestore.instance
+                    .collection("Users")
+                    .doc(currentUser!.uid)
+                    .update({
+                  'age': _age,
+                  'gender': _gender,
+                  'official_email': _officialEmail,
+                  'team_designation': _teamDesignation,
+                });
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(content: Text('Profile updated successfully')),
+                );
+                setState(() {
+                  _isEditing = false;
+                });
+              }
+            },
+            child: Text('Save'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Theme.of(context).colorScheme.background,
+      appBar: AppBar(
+        title: Text('Profile'),
+        leading: MyBackButton(),
+        actions: [
+          IconButton(
+            icon: Icon(_isEditing ? Icons.close : Icons.edit),
+            onPressed: () {
+              setState(() {
+                _isEditing = !_isEditing;
+              });
+            },
+          ),
+        ],
+      ),
+      body: currentUser == null
+          ? Center(child: Text("User not logged in"))
+          : FutureBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+        future: getUserDetails(),
+        builder: (context, snapshot) {
+          if (snapshot.connectionState == ConnectionState.waiting) {
+            return const Center(
+              child: CircularProgressIndicator(),
+            );
+          } else if (snapshot.hasError) {
+            return Center(child: Text("Error: ${snapshot.error}"));
+          } else if (snapshot.hasData) {
+            Map<String, dynamic> user = snapshot.data!.data()!;
+            return SingleChildScrollView(
+              child: Center(
+                child: Column(
+                  children: [
+                    const SizedBox(height: 25),
+                    GestureDetector(
+                      onTap: _isUploading ? null : pickImage,
+                      child: Stack(
+                        alignment: Alignment.center,
+                        children: [
+                          CircleAvatar(
+                            radius: 55,
+                            backgroundImage: user['profile_picture'] != null
+                                ? NetworkImage(user['profile_picture'])
+                                : null,
+                            child: user['profile_picture'] == null
+                                ? Icon(
+                              Icons.person,
+                              size: 64,
+                              color: Theme.of(context).colorScheme.primary,
+                            )
+                                : null,
+                          ),
+                          if (_isUploading)
+                            CircularProgressIndicator(),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(Icons.arrow_upward_sharp, size: 16),
+                        SizedBox(width: 4),
+                        Text(
+                          'Tap on the circle to upload your profile ',
+                          style: TextStyle(
+                            fontSize: 14,
+                            color: Colors.white60,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 10),
+                    Text(
+                      user['email'] ?? '',
+                      style: TextStyle(
+                        color: Colors.black87,
+                      ),
+                    ),
+                    Text(
+                      user['username'] ?? '',
+                      style: const TextStyle(
+                        fontSize: 24,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.green,
+                      ),
+                    ),
+                    const SizedBox(height: 20),
+                    _isEditing ? _buildEditForm() : _buildProfileInfo(user),
+                  ],
+                ),
+              ),
+            );
+          } else {
+            return Center(child: Text("No Data"));
+          }
+        },
+      ),
+    );
+  }
+}
